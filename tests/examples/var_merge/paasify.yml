@@ -8,8 +8,17 @@ config:
     var_null1: null
     var_test: null
 
+    # Test if this vars goes untill the tag level
+    # try to recall it at the tag level WITOUT stack level
     custom_from_var1: OK_from_config_global
 
+    # Tests of variables where we happend stuffs progressively
+    base_var1: my_prefix1
+
+    docker_debug_vars: debug,base,custom
+
+    var_image: alpine
+    var_escaped: TEST_OK
 
 sources:
   - name: default
@@ -38,10 +47,10 @@ stacks:
   - app: app2
     name: app2_copy1
 
-  # Test if app milti instances works
-  # RUN: paasify build app2_copy2
+  # This is expected to fail as there is no docker-compose
   - app: app2
-    path: app2_copy2
+    dir: app2_copy2
+    name: app2_copy2
 
 
   # This is expected to fail as there is no docker-compose
@@ -51,19 +60,30 @@ stacks:
 
   # Test core tags
   - app: app2
-    path: test_devel
+    name: app2_copy3
+    dir: test_devel
     vars:
       var_base2: local_value
       var_null2: null
       app_dir_db_data: my_value
-      db_pass: ${_secret_admin_password}
-      db_user: ${_env_USER}
+      db_pass: ${app_db_pass}
+      db_user: ${app_db_user}
+        #db_user: ${_env_USER}
 
       custom_from_var2: OK_from_config_stack
+
+      base_var1: ${base_var1}_my_middle1
+      base_var2: my_prefix2
     tags:
-      - debug   # Test loading docker-compose.debug.yml from app
+      - debug:   # Test loading docker-compose.debug.yml from app
+
       - debug-local:   # Test loading docker-compose.debug.yml from local
           custom_from_var3: KO_from_config_tag only allowed for jsonnet tags
+
+          # TOFIX:
+          # This can't be tested, we need a plugin that dump the ouput
+          base_var1: ${base_var1}_my_prefix1
+          base_var2: ${base_var2}_my_suffix2
 
       - override      # Test local override over app tag
       - docker-net-attach:

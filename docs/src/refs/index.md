@@ -1,17 +1,15 @@
-# API
+# Overview
 
 Paasify provides different APIs, depending your use cases, you may one or both:
 
 
-* `paasify` CLI
-    * Usage: Recommanded for beginers, CLI usage or bash scripting
-    * Manual: TODO
+* `paasify` command line interface
+    * Usage: Recommanded for most of people
+    * Manual: [man CLI](/refs/cli_usage/)
 
 * `paasify` python API
     * Usage: Recommanded for python scripting
-    * [Application and CLI](python_app.md)
-    * [Projects and stacks](python_project.md)
-    * [Other](python_api_other.md)
+    * See: [Development section](refs/python_api_app/)
 
 There are the different schema:
 

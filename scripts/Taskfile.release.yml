@@ -1,0 +1,70 @@
+version: '3'
+
+tasks:
+
+  # Git Workflow
+  # ---------------
+  git_merge_develop_into_main:
+    internal: true
+    desc: Merge git develop branch into main
+    cmds:
+      - git checkout main
+      - git pull origin
+      - git fetch origin develop:develop
+      - 'git merge --no-ff -m "chore: merge develop into main" develop'
+      - git push --set-upstream origin main
+
+  git_merge_master_into_develop:
+    internal: true
+    desc: Merge git main branch into develop
+    cmds:
+      - git checkout develop
+      - git pull origin
+      - git fetch origin main:main
+      - 'git merge --no-ff -m "chore: update develop from main" main'
+      - git push --set-upstream origin develop
+
+
+  # Release
+  # ---------------
+
+  release_stable:
+    desc: Pipeline to publish stable release
+    vars:
+      CURRENT_BRANCH:
+        sh: git rev-parse --abbrev-ref HEAD
+    cmds:
+      - task: git_merge_develop_into_main
+      - task release_stable
+      - task: git_merge_master_into_develop
+
+  release_beta:
+    desc: Pipeline to publish beta release
+    vars:
+      CURRENT_BRANCH:
+        sh: git rev-parse --abbrev-ref HEAD
+    cmds:
+      - task release_beta
+
+
+  # Helpers
+  # ---------------
+  tag_current_version:
+    desc: Tag current version
+    vars:
+      GIT_TAG:
+        sh: poetry version -s
+        #sh: git describe --tags --abbrev=0 2>/dev/null
+    cmds:
+      - git tag -a -m "tag {{.GIT_TAG}}" {{.GIT_TAG}}
+      - git push origin
+
+  bump_minor:
+    desc: When you want to work on new features (beta)
+    cmds:
+      - poetry run semantic-release version --prerelease
+
+  dev_changlog:
+    desc: Show currently modified things
+    cmds:
+      - poetry run semantic-release changelog --noop --unreleased

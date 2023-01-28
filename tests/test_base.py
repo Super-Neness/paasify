@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
-from pprint import pprint
+from pprint import pprint # noqa: F401
 import logging
 
 import pytest
@@ -11,7 +11,7 @@ import yaml
 from typer.testing import CliRunner
 
 from paasify.cli import cli_app
-from paasify.app2 import PaasifyApp
+from paasify.app import PaasifyApp
 import paasify.errors as error
 
 from paasify.common import get_paasify_pkg_dir
@@ -25,7 +25,8 @@ runner = CliRunner()
 
 def test_cli_info_without_project():
     result = runner.invoke(
-        cli_app, ["-vvvvv", "--config", cwd + "/tests/examples", "info"])
+        cli_app, ["-vvvvv", "--config", cwd + "/tests/examples", "info"]
+    )
     out = result.stdout_bytes.decode("utf-8")
     print(out)
     assert result.exit_code != 0
@@ -44,6 +45,7 @@ def test_cli_info_with_project():
 # Test stacks basics
 # ------------------------
 
+
 def test_stacks_resolution(data_regression):
     "Ensure name, app path and direct string config works correctly"
 
@@ -59,7 +61,7 @@ def test_stacks_resolution(data_regression):
     results = []
     for stack in prj.stacks.get_children():
         result = {
-            "stack_config": stack.serialize(mode='raw'),
+            "stack_config": stack.serialize(mode="raw"),
             "stack_name": stack.stack_name,
             # TOFIX: THIS
             "stack_dir": stack.stack_dir,
@@ -94,6 +96,7 @@ def test_stacks_resolution_fail_on_duplicates(data_regression):
 
 
 def read_file(file):
+    print("TRYING FILE", file)
     "Read file content"
     with open(file, encoding="utf-8") as _file:
         return "".join(_file.readlines())
@@ -110,6 +113,17 @@ def write_file(file, content):
         _file.write(content)
 
 
+def exclude_file_pattern(path):
+    excludes = [".swp", '/dumps/']
+    skip = False
+    for exclude in excludes:
+        if exclude in path:
+            print(f"SKIP PATH: {path}")
+            skip = True
+
+    return skip
+
+
 def recursive_replace(dir, old, new):
     "Replace all old occurence by new recursively in directory dir"
 
@@ -120,6 +134,10 @@ def recursive_replace(dir, old, new):
         for file in filenames:
 
             path = os.path.join(dirpath, file)
+            if exclude_file_pattern(path):
+                print("SKIP", path)
+                continue
+
             data = read_file(path)
             data = data.replace(old, new)
             write_file(path, data)
@@ -133,19 +151,20 @@ def load_yaml_file_hierarchy(dir):
 
     for (dirpath, dirnames, filenames) in os.walk(dir):
         for file in filenames:
-            files.append(os.path.join(dirpath, file))
-            # files.append([dirpath, file])
+            path = os.path.join(dirpath, file)
+            if exclude_file_pattern(path):
+                continue
+            files.append(path)
 
-    pprint(files)
     # Load yaml files
     results = {}
     for file in files:
-        # dir = file[0]
-        # fname = file[1]
-        # path = os.path.join(dir, fname)
 
         with open(file, encoding="utf-8") as _file:
-            payload = yaml.safe_load(_file)
+            try:
+                payload = yaml.safe_load(_file)
+            except yaml.scanner.ScannerError:
+                payload = _file.read()
 
         # if abs_path != dir:
         #     # Trigger abspath dir replacement

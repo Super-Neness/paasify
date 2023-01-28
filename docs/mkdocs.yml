@@ -8,25 +8,43 @@ site_author: mrjk
 site_description: "Paasify Documentation"
 
 watch:
-  - src
+  - src/static
+  - src/docs
+  - src/index.md
+  - src/plugins_apidoc
+  - src/refs
+  - src/schema_doc
+  - src/tutorial
+
   - ../paasify
 
 extra_css:
-  - css/mkdocstrings.css
+  - static/mkdocstrings.css
+#extra_javascript:
+  #- static/paasify.js
 
 nav:
     - Documentation:
-      - Introduction: index.md
+      - docs/install.md
       - docs/concepts.md
-      - docs/configuration.md
-      - docs/distribute.md
-      - docs/extend.md
-      - docs/advanced.md
+      # - docs/configuration.md
+      - docs/usage.md
+      #- docs/distribute.md
+      #- docs/extend.md
+      #- docs/best_practices.md
+      - docs/faq.md
     - Guides:
+      #- tutorial/quickstart.md
       - jupyter/*.ipynb
-      - tutorial/best_practices.md
+
+    - Collections:
+      - plugins_apidoc/index.md
+      - Apps:
+        - plugins_apidoc/app_*.md
+      - Jsonnet:
+        - plugins_apidoc/jsonnet_*.md
     - Reference:
-      - Introduction: refs/index.md
+      - Overview: refs/index.md
       - Command line: refs/cli_usage.md
       - Configuration:
           - Project: refs/schema_prj.md
@@ -36,21 +54,36 @@ nav:
       - Plugins:
           - refs/extend_base.md
           - refs/extend_tags.md
+
+    - Development:
+      - refs/changelog.md
+      - Code of conduct: develop/contribute.md
+      - refs/license.md
+
+      - Contribute:
+
+        - develop/intro.md
+        - develop/install.md
+        - develop/paasify.md
+        - develop/docs.md
+        - develop/release.md
       - Python API:
         - refs/python_api_app.md
         - refs/python_api_project.md
         - refs/python_api_other.md
-    - Plugins:
-      - plugins_apidoc/*/markdown.md
-    - About:
-      - about/development.md
-      - about/contribute.md
-      - about/license.md
+
 
 # https://squidfunk.github.io/mkdocs-material/setup/adding-a-git-repository/
 
 plugins:
   - search
+  - exclude-search:
+      exclude:
+        - ref/
+        # - page.md#section
+        # - directory/*
+        # - /*/page.md
+
   - mkdocstrings
   #- schema_reader:
   #    include:
@@ -58,6 +91,15 @@ plugins:
   - mkdocs-jupyter
   - literate-nav:
       nav_file: SUMMARY.md
+
+
+  # - gen-files:
+  #     scripts:
+  #       - gen_pages.py  # or any other name or path
+  - mkdocs-simple-hooks:
+      hooks:
+        #on_post_build: "docs.hooks:copy_logos"
+        on_files: "docs.gen_apidoc:on_files_hook"
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -67,6 +109,10 @@ markdown_extensions:
   - pymdownx.superfences
   - admonition
   - pymdownx.details
+  - attr_list
+  - pymdownx.emoji:
+      emoji_index: !!python/name:materialx.emoji.twemoji
+      emoji_generator: !!python/name:materialx.emoji.to_svg
 
 
 theme:
@@ -82,6 +128,7 @@ theme:
 #      - toc.integrate
       - navigation.top
       - search.highlight
+      - content.tabs.link
 
     #custom_dir: mkdocs_override/
     #custom_dir: overrides
@@ -90,16 +137,16 @@ theme:
 
       # Palette toggle for light mode
       - scheme: default
-        primary: light green
-        accent: indigo
+        primary: indigo
+        accent: yellow
         toggle:
           icon: material/brightness-7
           name: Switch to dark mode
 
       # Palette toggle for dark mode
       - scheme: slate
-        primary: blue grey
-        accent: green light
+        primary: indigo
+        accent: yellow
         toggle:
           icon: material/brightness-4
           name: Switch to light mode

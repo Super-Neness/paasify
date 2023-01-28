@@ -1,4 +1,4 @@
-.paasify/collections/*
+.paasify/_*
 */data/*
 */share/*
 */tmp/*

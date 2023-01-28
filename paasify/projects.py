@@ -27,7 +27,7 @@ import os
 from pprint import pprint  # noqa: F401
 import anyconfig
 
-from cafram.nodes import NodeMap
+from cafram.nodes import NodeMap, NodeList
 
 import paasify.errors as error
 from paasify.engines import EngineDetect
@@ -37,11 +37,64 @@ from paasify.framework import (
     PaasifyConfigVars,
 )
 from paasify.common import list_parent_dirs, find_file_up, get_paasify_pkg_dir
-
-from paasify.stacks2 import PaasifyStackTagManager, PaasifyStackManager
+from paasify.stacks import StackTagMgr, StackManager
 
 
 ALLOW_CONF_JUNK = False
+
+
+class PaasifyConfigExtraVars(NodeList, PaasifyObj):
+    "Paasify Project Configuration"
+
+    conf_default = []
+
+    conf_schema = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "Project extra vars files",
+        "description": "Extra vars file to load for this project",
+        "oneOf": [
+            {
+                "title": "List of file",
+                "description": "List of files to load",
+                "type": "array",
+                "items": {
+                    "type": "string",
+                },
+            },
+            {
+                "title": "String",
+                "description": "A single file to load",
+                "type": "string",
+            },
+            {
+                "title": "No configuration",
+                "description": "Disable extra_vars loading",
+                "type": "null",
+            },
+        ],
+        "examples": [
+            {
+                "extra_vars": [
+                    "../common_vars.yml"
+                    "common/common_vars.yml"
+                    "/absolute/path/common_vars.yml"
+                ],
+            },
+            {
+                "extra_vars": "single/file/to_load.yml",
+            },
+            {
+                "extra_vars": None,
+            },
+        ],
+    }
+
+    def node_hook_transform(self, payload):
+        """Init PassifyRuntime"""
+
+        if not payload:
+            payload = []
+        return payload
 
 
 class PaasifyProjectConfig(NodeMap, PaasifyObj):
@@ -53,6 +106,7 @@ class PaasifyProjectConfig(NodeMap, PaasifyObj):
         "tags": [],
         "tags_suffix": [],
         "tags_prefix": [],
+        "extra_vars": [],
     }
 
     conf_children = [
@@ -63,25 +117,29 @@ class PaasifyProjectConfig(NodeMap, PaasifyObj):
             "key": "vars",
             "cls": PaasifyConfigVars,
         },
+        {
+            "key": "extra_vars",
+            "cls": PaasifyConfigExtraVars,
+        },
         # {
         #     "key": "tags",
         #     "cls": list,
-        #     #"cls": PaasifyStackTagManager,
+        #     #"cls": StackTagMgr,
         # },
         # {
         #     "key": "tags_prefix",
         #     "cls": list,
-        #     #"cls": PaasifyStackTagManager,
+        #     #"cls": StackTagMgr,
         # },
         # {
         #     "key": "tags_suffix",
         #     "cls": list,
-        #    # "cls": PaasifyStackTagManager,
+        #    # "cls": StackTagMgr,
         # },
     ]
 
     conf_schema = {
-        # "$schema": "http://json-schema.org/draft-07/schema#",
+        "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "Paasify Project settings",
         "description": (
             "Configure main project settings. It provides global settings"
@@ -117,10 +175,11 @@ class PaasifyProjectConfig(NodeMap, PaasifyObj):
                             },
                         ],
                     },
+                    "extra_vars": PaasifyConfigExtraVars.conf_schema,
                     "vars": PaasifyConfigVars.conf_schema,
-                    "tags": PaasifyStackTagManager.conf_schema,
-                    "tags_suffix": PaasifyStackTagManager.conf_schema,
-                    "tags_prefix": PaasifyStackTagManager.conf_schema,
+                    "tags": StackTagMgr.conf_schema,
+                    "tags_suffix": StackTagMgr.conf_schema,
+                    "tags_prefix": StackTagMgr.conf_schema,
                 },
                 "examples": [
                     {
@@ -208,15 +267,14 @@ class PaasifyProjectRuntime(NodeMap, PaasifyObj):
     conf_default = {
         "load_file": None,
         "root_hint": None,
-        # TO CONFIRM
         "default_source": "default",
         "cwd": os.getcwd(),
-        # "working_dir": os.getcwd(),
-        # "working_dir": ".",
         "working_dir": None,
         "engine": None,
         "filenames": ["paasify.yml", "paasify.yaml"],
         "relative": None,
+        "dump_payload_log": False,
+        "no_tty": False,
     }
 
     def node_hook_transform(self, payload):
@@ -245,8 +303,7 @@ class PaasifyProjectRuntime(NodeMap, PaasifyObj):
         root_path = result["root_path"]
 
         paasify_source_dir = get_paasify_pkg_dir()
-        paasify_plugins_dir = os.path.join(
-            paasify_source_dir, "assets", "plugins")
+        paasify_plugins_dir = os.path.join(paasify_source_dir, "assets", "plugins")
         private_dir = os.path.join(root_path, ".paasify")
         collection_dir = os.path.join(private_dir, "collections")
         jsonnet_dir = os.path.join(private_dir, "plugins")
@@ -363,7 +420,7 @@ class PaasifyProject(NodeMap, PaasifyObj):
         },
         {
             "key": "stacks",
-            "cls": PaasifyStackManager,
+            "cls": StackManager,
         },
     ]
 
@@ -452,7 +509,7 @@ class PaasifyProject(NodeMap, PaasifyObj):
         },
     }
 
-    ident = "PaasifyProject"
+    ident = "main"
     engine_cls = None
     runtime = None
 
@@ -467,7 +524,7 @@ class PaasifyProject(NodeMap, PaasifyObj):
 
         # Inject payload
         if self.runtime.load_file is not False:
-            self.log.debug(f"Load file: {self.runtime.config_file_path}")
+            self.log.info(f"Load project file: {self.runtime.config_file_path}")
             _payload = anyconfig.load(self.runtime.config_file_path)
             payload.update(_payload)
 
@@ -477,3 +534,8 @@ class PaasifyProject(NodeMap, PaasifyObj):
             self.engine_cls = EngineDetect().detect(engine=engine_name)
 
         return payload
+
+    def node_hook_final(self):
+        "Report for logging"
+        ns = self.runtime.namespace
+        self.log.info(f"Project '{ns}' loaded")

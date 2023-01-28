@@ -16,32 +16,22 @@ from cafram.base import MixInLog, Base
 
 from cafram.utils import (
     # to_domain,
-    # to_yaml,
+    first,
     merge_dicts,
-    # flatten,
-    # duplicates,
-    # write_file,
-    # to_json,
-    # to_dict,
-    # from_yaml,
-    # serialize,
-    # json_validate,
 )
 
 import paasify.errors as error
-
-# from paasify.common import lookup_candidates  # serialize, , json_validate, duplicates
-# from paasify.engines import bin2utf8
-
+from paasify.common import filter_existing_files
 
 _log = logging.getLogger()
+_first = first
 
 
 class PaasifyObj(Base, MixInLog):
     "Default Paasify base object"
 
-    module = "paasify.api"
-    conf_logger = "paasify"
+    module = "paasify.cli"
+    conf_logger = None
     log = _log
 
     def __init__(self, *args, **kwargs):
@@ -52,11 +42,6 @@ class PaasifyObj(Base, MixInLog):
 
         # Other things
         # super().__init__(*args, **kwargs)
-
-        # print ("INIT PaasifyObj", self, '->'.join([ x.__name__ for x in self.__class__.__mro__]), args, kwargs)
-        # #print ("INIT PaasifyObj", self, '->'.join([ x.__name__ for x in self.__class__.__mro__]), args, kwargs)
-        # if hasattr(self, "get_parents"):
-        #     print (self.get_parents())
 
 
 class PaasifySimpleDict(NodeMap, PaasifyObj):
@@ -89,16 +74,16 @@ class PaasifyConfigVar(NodeMap, PaasifyObj):
                 # ".*": {
                 "title": "Environment Key value",
                 "description": "Value must be serializable type",
-                "oneOf": [
-                    {"title": "As string", "type": "string"},
-                    {"title": "As boolean", "type": "boolean"},
-                    {"title": "As integer", "type": "integer"},
-                    {
-                        "title": "As null",
-                        "description": "If set to null, this will remove variable",
-                        "type": "null",
-                    },
-                ],
+                # "oneOf": [
+                #    {"title": "As string", "type": "string"},
+                #    {"title": "As boolean", "type": "boolean"},
+                #    {"title": "As integer", "type": "integer"},
+                #    {
+                #        "title": "As null",
+                #        "description": "If set to null, this will remove variable",
+                #        "type": "null",
+                #    },
+                # ],
             }
         },
     }
@@ -130,12 +115,6 @@ class PaasifyConfigVar(NodeMap, PaasifyObj):
             raise Exception(f"Unsupported type {type(payload)}: {payload}")
 
         return result
-
-    def node_hook_final(self):
-        "Ensure the logger is loaded early"
-
-        # Start logger
-        self.set_logger("paasify.cli.ConfigVar")
 
 
 vardef_schema_complex = {
@@ -219,10 +198,11 @@ class PaasifyConfigVars(NodeList, PaasifyObj):
                 "type": "object",
                 "default": {},
                 # "patternProperties": {
-                #     ".*": { "properties": PaasifyConfigVar.conf_schema, }
-                # }
+                #    #".*": { "properties": PaasifyConfigVar.conf_schema, }
+                #    ".*": { "properties": vardef_schema_complex , }
+                # },
                 "propertyNames": {"pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
-                "additionalProperties": PaasifyConfigVar.conf_schema,
+                # "additionalProperties": PaasifyConfigVar.conf_schema,
                 "examples": [
                     {
                         "env": {
@@ -276,14 +256,7 @@ class PaasifyConfigVars(NodeList, PaasifyObj):
         else:
             raise error.InvalidConfig(f"Unsupported type: {payload}")
 
-        # print (f"INIT NEW VARSSSS: {type(payload)} {result} VS {payload}")
         return result
-
-    def node_hook_final(self):
-        "Ensure the logger is loaded early"
-
-        # Start logger
-        self.set_logger("paasify.cli.ConfigVarsManager")
 
     def get_vars(self, current=None):
         "Parse vars and interpolate strings"
@@ -332,3 +305,172 @@ class PaasifySource(NodeDict, PaasifyObj):
 class PaasifySources(NodeDict, PaasifyObj):
     "Sources manager"
     conf_children = PaasifySource
+
+
+class FileReference:
+    """A FileReference Object
+
+    Useful for managing project paths
+
+    The path, once created is immutable, you choose how it behave one time
+    and done forever. They act a immutable local variable.
+
+
+    path: The path you want to manage
+    root: The root of your project, CWD else
+    keep: Returned path will be returned as absolute
+        True: Return default path from origin abs/rel
+        False: Return default path from root_path abs/rel
+
+    """
+
+    def __init__(self, path, root=None, keep=False):
+
+        assert isinstance(path, str), f"Got: {type(path)}"
+        root = root or os.getcwd()
+        self.raw = path
+        self.root = root
+        self.keep = keep
+
+    def __str__(self):
+        return self.path()
+
+    def is_abs(self):
+        "Return true if the path is absolute"
+        return os.path.isabs(self.raw)
+
+    def is_root_abs(self):
+        "Return true if the root path is absolute"
+        return os.path.isabs(self.root)
+
+    def path(self, start=None):
+        "Return the absolute or relative path from root depending if root is absolute or not"
+
+        if self.keep:
+            if self.is_abs():
+                return self.path_abs(start=start)
+            return self.path_rel(start=start)
+        else:
+            if self.is_root_abs():
+                return self.path_abs(start=start)
+            return self.path_rel(start=start)
+
+    def path_abs(self, start=None):
+        "Return the absolute path from root"
+
+        if self.is_abs():
+            result = self.raw
+        else:
+            start = start or self.root
+            real_path = os.path.join(start, self.raw)
+            result = os.path.abspath(real_path) or "."
+        return result
+
+    def path_rel(self, start=None):
+        "Return the relative path from root"
+
+        if self.is_abs():
+            start = start or self.root
+            result = os.path.relpath(self.raw, start=start)
+        else:
+            start = start or self.root
+            real_path = os.path.join(start, self.raw)
+            result = os.path.relpath(real_path) or "."
+        return result
+
+
+class FileLookup(PaasifyObj):
+    """A FileLookup Object
+
+    Useful for identifing available files in differents hierachies"""
+
+    def __init__(self, path=None, pattern=None, **kwargs):
+        self._lookups = []
+        self.log = logging.getLogger("paasify.cli.FileLookup")
+
+        if path and pattern:
+            self.insert(path, pattern, **kwargs)
+
+    def _parse(self, path, pattern, **kwargs):
+        "Ensure lookup is correctly formed"
+        data = dict(kwargs)
+        data.update(
+            {
+                "path": path,
+                "pattern": pattern if isinstance(pattern, list) else [pattern],
+            }
+        )
+        return data
+
+    def insert(self, path, pattern, **kwargs):
+        "Insert first a path/pattern to the lookup object"
+        data = self._parse(path, pattern, **kwargs)
+        self._lookups.insert(0, data)
+
+    def append(self, path, pattern, **kwargs):
+        "Append a path/pattern to the lookup object"
+        data = self._parse(path, pattern, **kwargs)
+        self._lookups.append(data)
+
+    def get_lookups(self):
+        "Return object lookups"
+        return self._lookups
+
+    def lookup_candidates(self):
+        "List all available candidates of files for given folders, low level"
+
+        result = []
+        for lookup in self._lookups:
+            path = lookup["path"]
+            if path:
+                cand = filter_existing_files(path, lookup["pattern"])
+                lookup["matches"] = cand
+                result.append(lookup)
+        return result
+
+    def paths(self, first=False):
+        "All matched files"
+
+        vars_cand = self.lookup_candidates()
+        ret = []
+        for cand in vars_cand:
+            for match in cand["matches"]:
+                ret.append(match)
+
+        if first:
+            return _first(ret) if len(ret) > 0 else None
+        return ret
+
+    def match(self, fail_on_missing=False, first=False):
+        "Match all candidates, and built a list result with object inside"
+
+        vars_cand = self.lookup_candidates()
+        result = []
+        missing = []
+        for cand in vars_cand:
+            matches = cand["matches"]
+            for match in matches:
+                payload = dict(cand)
+                payload.update({"match": match})
+                result.append(payload)
+            if len(matches) == 0:
+                # Still add unlucky candidates
+                missing.append(cand)
+
+        # Report errors if missing
+        if fail_on_missing and len(missing) > 0:
+            missing_paths = [
+                os.path.join(lookup["path"], first(lookup["pattern"]))
+                for lookup in missing
+            ]
+            for missed in missing_paths:
+                self.log.info(f"Missing file: {missed}")
+            missed_str = ",".join(missing_paths)
+            raise error.MissingFile(
+                f"Can't load {len(missing_paths)} vars files: {missed_str}"
+            )
+
+        if first:
+            return _first(result) if len(result) > 0 else None
+
+        return result

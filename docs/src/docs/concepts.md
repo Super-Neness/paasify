@@ -1,12 +1,30 @@
 # Concepts
 
-## User Interface
+Paasify try to make docker compose files deployment easier and more reproducible. The whole point is to deploy
+docker containers. A general overview of docker looks like:
+
+* docker: container engine
+* docker container: containerized process
+* docker-compose: create docker containers with yaml files
+
+Paasify introduces some new top level concepts:
+
+* paasify project: a custom association of stacks
+* paasify stacks: an application deployable with docker-compose
+* paasify collection: collection of stacks in a git repo
+* paasify: program to manage paasify project
+
+So paasify is built over the concept of project, where is defined a sequential list of stacks. Each stacks corresponds to
+a docker-compose file to be deployed. The whole is contained inside the notion of project,  which is declared in
+a `paasify.yml` config file, at the root of your project directory.
+
+
+## Overview
 
 Paasify provides two interfaces:
 
 * Executable program via the `paasify` binary
 * Python library called `paasify`
-
 
 Paasify is shipped with a an executable called `paasify`. It provides a first class interface to
 interact with a paasify project. It is also possible to use Paasify via it's
@@ -14,80 +32,48 @@ python API `paasify` ([Documentation](/schema_doc/python_app)).
 
 ### Configuration file
 
-By convention, a paasify store the whole user configuration in a `paasify.yml` file.
-This is the entrypoint of a project.
-
-### Current directory context
-
-The command line is contextualized depending your current working directory. Paasify
-will try to find the upper level `paasify.yml` file. If a project is found, will work
-as if executed at the root of this project directory. If your current working directory
-is inside a stack, then all commands will apply on this stack:
+By convention, a paasify store it's whole configuration in a `paasify.yml` file.
+This is the entrypoint of a project. This file is usually meant to be commited, if you use git.
 
 
-``` console
-# For a given file hierarchy
-$ tree .
-
-
-# No project enabled
-$ paasify ctx
-Outside project
-No current stack
-
-# Only project enables
-$ cd prj1
-$ ls -1
-paasify.yml
-$ paasify ctx
-Inside project
-No current stack
-
-# Project and stack enabled
-$ cd stack1
-$ paasify ctx
-Inside project
-Current stack: stack1
-```
-
-!!! tip "Specifying specific stacks/service from project"
-    You can most of the time just prepend the stack name
-    at the end of the command. An optional last argument can accept
-    a specific service, like:
-    ``` console
-    paasify recreate <stack_name>
-    paasify logs <stack_name> <service>
-    ```
-
-This behavior is similar for both CLI and python library.
-
-## Project (Configuration)
+### Ten thousand feet overview
 
 A project exists when a `paasify.yml` configuration file exists in a directory. The
-presence of this file determines the project root repository.
+presence of this file determines the project root repository. A project is composed of the following elements:
 
-A project will define:
 
-* A list of stacks:
-    * Each stack represent an application to deploy
-    * Each stack is binded to one `docker-compose.yml` file
-    * This list is sequential, created in the defined order, removed in the reversed order
-* A list of sources:
-    * Each source is a reusable application
-    * They can be deployed and distributed
-    * May be considered as a project dependencies
-    * May provide some extras plugins
-* A global default configuration:
+* `config:` A global default configuration:
     * Allow to apply settings on each stacks.
-    * Allow to default some behaviors
+    * Define global behaviors
+
+* `sources:` A list of sources:
+    * Each source is mapped to a collection of reusable applications
+    * They can be a path or a git url
+    * May provide matter to deploy to your project
+    * May be considered as your project dependencies
+    * A collection:
+        * It's a directory containing applications and jsonnet plugins
+        * You can either use predefined collections or make your owns
+        * A collection is usually managed as a git repo
+        * A collection can also provides jsonnet plugins
+        * An application:
+            * Provides at least one `docker-compose.yml` file
+            * Optionnaly provides tagged `docker-compose.$TAG.yml` files
+            * Optionnaly provides jsonnet plugin `$TAG.jsonnet` files
+
+* `stacks:` A list of stacks:
+    * Each stack represent application(s) to deploy
+    * Each stack is binded to one `docker-compose.run.yml` file
+    * This list is sequential, created in the config order, removed in the reversed order
+    * Stack:
+        * Defined by a name and binded to a subdirectory
+        * Allow to define which vars and tags you want your stack have
 
 
+The following chapters will explore more in depth each components.
 
-### Project stacks
 
-A project is the top level configuration for a list of given stacks.
-
-#### Stacks
+## Project stacks
 
 A stack is a simple set of dependant services, it would be comparable
 to a kubernetes pod.
@@ -103,6 +89,7 @@ A Stack is support most of CLI operations, like: start, stop, build, info ...
 #### Stacks vars
 
 To assign vars to stack:
+
 ``` yaml title="paasify.yml" hl_lines="3-4"
 stacks:
   - name: traefik
@@ -110,7 +97,8 @@ stacks:
       myvar: my_value_override
 ```
 
-But globally:
+And globally:
+
 ``` yaml title="paasify.yml" hl_lines="1-3"
 config:
   vars:
@@ -121,9 +109,27 @@ stacks:
       myvar: my_value_override
 ```
 
+You can call other vars as well with this syntax, and do things like:
+
+``` yaml title="paasify.yml" hl_lines="3-4 8-9"
+config:
+  vars:
+    myvar: default
+    myvar_prefix: my_value
+stacks:
+  - name: traefik
+    vars:
+      myvar: ${myvar_prefix}_override
+      myvar_orig: $myvar
+```
+
+!!! warning "Stack vars and container environment variables are different"
+
+    Stack vars are used to feed the docker-compose parserr; none of these variables
+    are passed to container environment by default.
+
 
 #### Stacks tags
-
 
 A tag can either corresponds to:
 
@@ -132,12 +138,13 @@ A tag can either corresponds to:
 
 
 !!! info "There are two types of plugins"
+
     Related documentation is available [here](/advanced#two-kinds-of-plugins)
 
 
 Both mechanisms allow to achieve different things, while the former
 provide a well-known docker-compose merge mechanism, it may not
-sufficient to provide advanced functionnality, and this is where the
+sufficient to provide advanced functionnality; and this is where the
 later become useful, leveraging the jsonnet language support to modify
 docker-compose structure.
 

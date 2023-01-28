@@ -12,7 +12,7 @@
 
 ## Paasify App: `paasify.app`
 
-::: paasify.app2
+::: paasify.app
     options:
       show_root_heading: True
       show_source: true

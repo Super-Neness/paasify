@@ -23,21 +23,6 @@ How to choose between both?
 See how to [create plugins](refs/extend_base.md) for further infos.
 
 
-::: paasify.stack_components.PaasifyStackTag.lookup_docker_files_tag
-    options:
-      show_root_heading: False
-      show_source: true
-      heading_level: 3
-      # show_category_heading: true
-
-::: paasify.stack_components.PaasifyStackTag.lookup_jsonnet_files_tag
-    options:
-      show_root_heading: False
-      show_source: true
-      heading_level: 3
-      # show_category_heading: true
-
-
 
 ## docker-compose tag
 

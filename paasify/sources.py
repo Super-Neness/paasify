@@ -7,22 +7,14 @@ import os
 import logging
 from pprint import pprint, pformat  # noqa: F401
 
-# import yaml
-# import anyconfig
-# import sh
-
-# import _jsonnet
-
 from giturlparse import parse as gitparse
 
-# from paasify.common import _exec
 from cafram.utils import _exec, first
 from cafram.nodes import NodeMap, NodeList
 
-# from paasify.class_model import ClassClassifier
-from paasify.framework import PaasifyObj
+from paasify.common import get_paasify_pkg_dir
+from paasify.framework import PaasifyObj, FileReference
 import paasify.errors as error
-
 
 log = logging.getLogger(__name__)
 
@@ -39,86 +31,173 @@ class Source(NodeMap, PaasifyObj):
         "remote": None,
         "name": None,
         "prefix": None,
+        "dir": None,
+        "install": None,
         # "prefix": "https://github.com/%s.git",
     }
 
     schema_def = {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "Paasify Source configuration",
-        "additionalProperties": False,
-        "type": "object",
-        "properties": {
-            "remote": {
+        "oneOf": [
+            {
                 "type": "string",
             },
-            "name": {
-                "type": "string",
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "name": {
+                        "type": "string",
+                    },
+                    "remote": {
+                        "type": "string",
+                    },
+                    "ref": {
+                        "type": "string",
+                    },
+                    "prefix": {
+                        "type": "string",
+                    },
+                    "aliases": {
+                        "type": "array",
+                    },
+                },
             },
-            "prefix": {
-                "type": "string",
-            },
-            # "alias": {
-            #    "type": "array",
-            # },
-        },
+        ],
     }
 
-    @property
-    def name(self):
-        "Return the remote name"
-        conf = self.get_value()
-        name = conf.get("name")
-        if name:
-            ret = name
-        else:
-            ret = self.git_repo_ident()
+    def extract_short(self, short):
+        "Guess data from source short forms"
+        ret = None
 
-        assert ret, f"Stack without name or remote ! {self}"
-        return ret
+        # Try if remote
+        remote = self.remote or short
+        if remote:
+            out = gitparse(remote)
+            if hasattr(out, "url"):
+                # Guess from valid URL
+                ret = {
+                    "remote": out.url,
+                    "name": out.repo,
+                    "dir": f"{out.owner}-{out.repo}",
+                    "install": "clone",
+                    "guess": f"a git repo: {out.url}",
+                }
+            else:
+                self.log.trace(f"Source is not a git repo: {self._node_conf_raw}")
 
-    # @property
-    def git_repo_ident(self):
-        "Return git repo ident"
-        remote = self.remote
-        if not remote:
-            self.log.info(
-                f"Using local collection for source: {self.serialize('raw')}")
-            if self.name:
-                return self.name
+        # Try if dir
+        value_ = self.dir or self.remote or self.name or short
+        if not ret and value_:
+            # So is it a path? Relative, absolute?
+            install_ = self.install or "none"
 
-            raise Exception("Missing source name for: {self.serialize('raw')}")
+            # Look for direct path
+            path = FileReference(value_, root=self.runtime.root_path, keep=True)
+            if os.path.isdir(path.path()):
+                path_ = path.path()
+                ret = {
+                    "remote": None,
+                    "name": str(self.name or os.path.basename(path.path_abs())),
+                    "path": path_,
+                    "install": install_,
+                    "guess": f"path: {path_}",
+                }
+            else:
+                self.log.trace(
+                    f"Source is not found in path '{path}' for {self._node_conf_raw}"
+                )
 
-        # Why does this lint fails ?
-        # pylint: disable=no-member
-        out = gitparse(self.remote)
-        ret = f"{out.owner}/{out.repo}"
-        return ret
+            # Look into <prj>.paasify/collections
+            if not ret:
+                path_ = FileReference(
+                    value_, self.runtime.project_collection_dir, keep=True
+                ).path()
+                if os.path.isdir(path_):
+                    ret = {
+                        "remote": None,
+                        "name": str(self.name or os.path.basename(path_)),
+                        "path": path_,
+                        "install": install_,
+                        "guess": f"inside the stack: {path_}",
+                    }
+                else:
+                    self.log.trace(
+                        f"Source is not found in collection dir '{path}' for {self._node_conf_raw}"
+                    )
 
-    @property
-    def path(self):
-        "Return path of git repo installation path"
+        # Try default gh repo
+        value_ = self.dir or self.remote or short
+        if not ret and value_:
+            # Last change to guess from pattern
+            owner = None
+            repo = value_
+            if "/" in value_:
+                parts = short.split("/", 2)
+                owner = parts[0]
+                repo = parts[1]
 
-        actual_path = self.git_repo_ident()
-        if not actual_path:
-            raise error.InvalidSourceConfig(
-                f"Can't find path for source: {self.serialize('raw')}"
-            )
+            if not owner:
+                owner = "paasify"
 
-        ret = os.path.join(self.collection_dir, actual_path)
-        return ret
+            remote_ = f"https://github.com/{owner}/{repo}.git"
+            ret = {
+                "remote": remote_,
+                "name": f"{owner}/{repo}",
+                "dir": f"{owner}/{repo}",
+                "install": "clone",
+                "guess": "Refer to github repository ({remote_})",
+            }
 
-    @property
-    def git_url(self):
-        "Return the git URL"
-        ret = self.remote
-        if self.prefix:
-            ret = f"{self.prefix}{self.remote}"
+        if not ret:
+            msg = f"Invalid configuration for source: {self._node_conf_raw}"
+            raise error.InvalidSourceConfig(msg)
+
+        assert ret["install"]
         return ret
 
     def node_hook_init(self, **kwargs):
-
+        "Setup object vars from parents"
         self.obj_prj = self._node_parent._node_parent
         self.collection_dir = self.obj_prj.runtime.project_collection_dir
+
+    def node_hook_transform(self, payload):
+        "Transform short form into dict"
+
+        if isinstance(payload, str):
+            payload = {"short": payload}
+        return payload
+
+    def node_hook_final(self):
+        "Init source correctly from available elements"
+
+        self.runtime = self._node_parent._node_parent.runtime
+        self.relative = self.runtime.relative
+
+        # TODO: this is very awful
+        self.short = getattr(self, "short", None)
+        self.name = getattr(self, "name", None)
+        self.dir = getattr(self, "dir", None)
+        self.aliases = getattr(self, "aliases", [])
+        self.remote = getattr(self, "remote", None)
+        self.install = getattr(self, "install", None)
+        self.path = None
+
+        extracted = None
+        extracted = self.extract_short(self.short)
+        for key, value in extracted.items():
+            setattr(self, key, getattr(self, key, None) or value)
+        self.log.debug(f"Source '{self.name}' is {extracted['guess']}")
+
+        # The actual thing we all want !
+        if not self.path:
+            self.path = FileReference(
+                self.dir, self.runtime.project_collection_dir, keep=True
+            ).path()
+
+        assert self.name
+        assert self.path
 
     def is_git(self):
         "Return true if git repo"
@@ -129,21 +208,56 @@ class Source(NodeMap, PaasifyObj):
         "Return true if installed"
         return os.path.isdir(self.path)
 
-    def install(self):
+    def cmd_install(self):
         "Install from remote"
 
         # Check if install dir is already present
-        if os.path.isdir(self.path):
-            self.log.info("This source is already installed")
+        remote = self.remote
+        install = self.install
+
+        # Skip non installable sources
+        if install == "none":
+            self.log.notice(f"Source '{self.name}' is a path, no need to install")
             return
 
-        self.log.notice(f"Installing git source: {self.git_url}")
+        # Ensure parent directory exists before install
+        dest = os.path.join(self.collection_dir, self.dir)
+        parent_dir = os.path.dirname(dest)
+        if not os.path.isdir(parent_dir):
+            self.log.info(f"Creating parent directories: {parent_dir}")
+            os.makedirs(parent_dir)
 
-        # Git clone that stuff
-        cli_args = ["clone", self.git_url, self.path]
-        _exec("git", cli_args, _fg=True)
+        # Install source
+        if install.startswith("symlink"):
+            self.log.notice(f"Installing '{self.name}' via {install}: {remote}")
 
-    def update(self):
+            # Ensure nothing exists first
+            if os.path.exists(dest):
+
+                if not os.path.exists(os.readlink(dest)):
+                    self.log.notice(f"Removing broken link in: {dest}")
+                    os.unlink(dest)
+                else:
+                    assert False, "Found a bug !"
+
+            # Create the symlink
+            self.log.notice(f"Collection symlinked in: {dest}")
+            os.symlink(remote, dest)
+
+        elif install == "clone":
+            # Git clone that stuff
+            if os.path.isdir(self.path):
+                self.log.notice(
+                    f"Source '{self.name}' is already installed in {self.path}"
+                )
+                return
+            self.log.notice(f"Installing '{self.name}' git: {remote} in {self.path}")
+            cli_args = ["clone", remote, self.path]
+            _exec("git", cli_args, _fg=True)
+        else:
+            raise Exception(f"Unsupported methods: {install}")
+
+    def cmd_update(self):
         "Update from remote"
 
         # Check if install dir is already present
@@ -152,7 +266,8 @@ class Source(NodeMap, PaasifyObj):
             return
 
         # Git clone that stuff
-        self.log.info(f"Updating git repo: {self.git_url}")
+        git_url = self.git_url()
+        self.log.info(f"Updating git repo: {git_url}")
         cli_args = [
             "-C",
             self.path,
@@ -178,13 +293,69 @@ class SourcesManager(NodeList, PaasifyObj):
                 "title": "List of sources",
                 "description": "Each source define a git repository and a name for stack references",
                 "type": "array",
-                "additionalProperties": False,
                 "items": Source.schema_def,
             },
         ],
     }
 
     conf_children = Source
+
+    def node_hook_transform(self, payload):
+
+        module_path = os.path.dirname(error.__file__)
+        module_path2 = get_paasify_pkg_dir()
+        assert module_path == module_path2, "TODO: Validate this"
+        paasify_collection = os.path.join(
+            module_path, "assets", "collections", "paasify"
+        )
+
+        # Always inject the paasify core source at first
+        payload = payload or []
+        payload.insert(
+            0,
+            {
+                "name": "paasify",
+                "dir": paasify_collection,
+            },
+        )
+
+        return payload
+
+    def node_hook_final(self):
+        "Prepare sources"
+
+        # Look for duplicate names
+        known_names = []
+        for src in self.get_children():
+
+            if src.name in known_names:
+                dups = [dup._node_conf_raw for dup in self.find_by_name_alias(src.name)]
+                dups = ", ".join(dups)
+                msg = f"Two stacks have the same name: {dups}"
+                raise error.DuplicateSourceName(msg)
+            known_names.append(src.name)
+
+            for alias in src.aliases:
+                if alias in known_names:
+                    dups = [
+                        dup._node_conf_raw for dup in self.find_by_name_alias(alias)
+                    ]
+                    dups = ", ".join(dups)
+                    msg = f"An alias have duplicate assignments: {dups}"
+                    raise error.DuplicateSourceName(msg)
+                known_names.append(alias)
+
+        # Assign a default node:
+        default = self.find_by_name_alias("default")
+        if len(default) < 1:
+            first_node = first(self.get_children())
+            if first_node:
+                first_node.aliases.append("default")
+                self.log.info(
+                    f"First source has been set as default: {first_node.name}"
+                )
+            else:
+                self.log.info("No source found for this project")
 
     def get_all(self):
         "Return the list of all sources"
@@ -196,52 +367,75 @@ class SourcesManager(NodeList, PaasifyObj):
         sources = self.get_children()
         return [src.name for src in sources]
 
-    def get_source(self, src_name):
-        "Get source"
+    def get_app_source(self, app_name, source=None):
+        "Return the source of an app_name"
+
+        if source:
+            sources = self.find_by_name_alias(source)
+        else:
+            sources = self.get_all()
+
+        checked_dirs = []
+        for src in sources:
+            check_dir = os.path.join(src.path, app_name)
+            if os.path.isdir(check_dir):
+                return src
+            checked_dirs.append(check_dir)
+
+        # Fail and explain why
+        sources = [src.name for src in self.get_all()]
+        src_str = ",".join(sources)
+        msg_dirs = " ".join(checked_dirs)
+        msg = f"Impossible to find app '{app_name}' in sources '{src_str}' in paths: {msg_dirs}"
+
+        if len(sources) != checked_dirs:
+            hint = "Are you sure you have installed sources before? If not, run: paasify src install"
+            self.log.warning(hint)
+        raise error.MissingApp(msg)
+
+    def get_search_paths(self):
+        "Get search paths"
+
+        return [{"path": src.path, "src": src} for src in self.get_children()]
+
+    def find_by_name_alias(self, string, name=None, alias=None):
+        "Return all src that match name or alias"
+
+        name = name or string
+        alias = alias or string
+
         sources = self.get_children()
+        return [src for src in sources if name == src.name or alias in src.aliases]
 
-        return first([src for src in sources if src.name == src_name])
+    # Commands
+    # ======================
 
-    def find_app(self, app_path, source_name=None):
-        "Find an app across all sources"
+    def cmd_tree(self) -> list:
+        "Show a tree of all sources"
 
-        source_names = [source_name] or self.list_all_names()
+        print("Not implemented yet")
 
-        for src in source_names:
-            src = self.get_source(src)
-            assert src.path, f"Source path should not be None: {self.__dict__}"
-            test_dir = os.path.join(src.path, app_path)
-            if os.path.isdir(test_dir):
-                return test_dir
-        return None
-
-    def resolve_ref_pattern(self, src_pat):
-        "Return a resource from its name or alias"
-
-        for src_name_def in self.list_all_names():
-
-            if f"{src_name_def}:" in src_pat:
-                rsplit = src_pat.split(":", 2)
-                src_name = rsplit[0]
-                src_stack = rsplit[1]
-
-                return src_stack, src_name
-
-        return src_pat, None
-
-    # =========================
-
-    def cmd_ls(self) -> list:
+    def cmd_ls(self, explain=False) -> list:
         "List all stacks names"
 
         sources = self.get_children()
-        print(f"{'Name' :<32}   {'Installed' :<14} {'git' :<14} {'URL' :<10}")
-        for src in sources:
+        for src in [None] + sources:
 
-            is_installed = "True" if src.is_installed() else "False"
-            is_git = "True" if src.is_git() else "False"
+            if not src:
+                remote = "REMOTE"
+                name = "NAME"
+                is_installed = "INSTALLED"
+                is_git = "GIT"
+                path = "PATH"
+            else:
+                is_installed = "True" if src.is_installed() else "False"
+                is_git = "True" if src.is_git() else "False"
+                remote = src.remote or ""
+                name = src.name
+                path = src.path
+
             print(
-                f"  {src.name :<32} {is_installed :<14} {is_git :<14} {src.git_url :<10} {src.path}"
+                f"  {name :<20} {is_installed :<10} {is_git :<8} {remote :<50} {path}"
             )
 
     def cmd_install(self):
@@ -250,7 +444,7 @@ class SourcesManager(NodeList, PaasifyObj):
         sources = self.get_children()
         for src in sources:
             log.notice(f"Installing source: {src.name}")
-            src.install()
+            src.cmd_install()
 
     def cmd_update(self):
         "Update all source"
@@ -258,4 +452,4 @@ class SourcesManager(NodeList, PaasifyObj):
         sources = self.get_children()
         for src in sources:
             log.notice(f"Installing source: {src.name}")
-            src.update()
+            src.cmd_update()

@@ -6,7 +6,7 @@ dist/*
 # Temporary files
 .coverage
 *.code-workspace
-docs/build/*
+#docs/build/*
 
 # User customization
 .envrc.*
@@ -18,7 +18,7 @@ scripts/Taskfile.extra.yml
 .vscode/*
 
 # Temp
-docs/code_config/*
+#docs/code_config/*
 lab/*
 tmp/*
 tests_dev/*

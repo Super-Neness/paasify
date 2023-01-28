@@ -130,3 +130,21 @@ class InvalidSourceConfig(PaasifyError):
     """Raised when a source is not configured properly"""
 
     rc = 46
+
+
+class UndeclaredVariable(PaasifyError):
+    """Raised when a a variable is called but not defined"""
+
+    rc = 47
+
+
+class MissingFile(PaasifyError):
+    """Raised when referencing unexisting file"""
+
+    rc = 48
+
+
+class DuplicateSourceName(PaasifyError):
+    """Raised when two sources have the same name"""
+
+    rc = 49

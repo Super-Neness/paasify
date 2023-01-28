@@ -70,19 +70,10 @@ tasks:
   # MkDocs (Local Python)
   # -----------------
 
-  doc_build:
-    desc: Generate API doc
-    run: once
-    cmds:
-      - ./gen_apidoc.sh
-    sources:
-      - ../paasify/*.py
-
   doc_serve:
     aliases:
       - serve
     desc: Run mkdocs website
-    deps: [doc_build]
     interactive: true
     cmds:
       - >

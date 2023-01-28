@@ -12,7 +12,7 @@
 
 ## Paasify Stacks
 
-::: paasify.stacks2
+::: paasify.stacks
     options:
       show_root_heading: True
       show_source: true

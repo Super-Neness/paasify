@@ -9,7 +9,7 @@ stacks:
   # Minimal
   - app: custom_source:custom_app
   - name: my_local_app
-  - path: local/app/path
+  - dir: local/app/path
 
   ## with app and name
   - app: custom_source:custom_app
@@ -19,10 +19,10 @@ stacks:
 
   ## with app and path
   - app: custom_source:custom_app
-    path: nested/path
+    dir: nested/path
   - app: default_source_app
-    path: nested/path
+    dir: nested/path
 
   ## with name and path
   - name: my_local_app
-    path: nested/path
+    dir: nested/path

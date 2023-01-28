@@ -6,21 +6,16 @@ Holds common pieces of code
 """
 
 import os
+import logging
 from enum import Enum
 from string import Template
 
-from pprint import pprint
-
-# from pathlib import Path
-# from jsonschema import Draft202012Validator, validators
-# import paasify.errors as error
-
-import shlex
-import re
+# from pprint import pprint
 
 # =====================================================================
 # Init
 # =====================================================================
+log = logging.getLogger()
 
 
 class OutputFormat(str, Enum):
@@ -46,6 +41,11 @@ class SchemaTarget(str, Enum):
 # =====================================================================
 # Misc functions
 # =====================================================================
+
+
+def uniq(seq):
+    """Remove duplicate duplicates items in a list while preserving order"""
+    return list(dict.fromkeys(seq))
 
 
 def update_dict(dict1, dict2, strict=False):
@@ -102,21 +102,6 @@ def filter_existing_files(root_path, candidates):
     return list(set(result))
 
 
-def lookup_candidates(lookup_config):
-    "List all available candidates of files for given folders"
-
-    result = []
-    for lookup in lookup_config:
-        path = lookup["path"]
-        if path:
-            cand = filter_existing_files(path, lookup["pattern"])
-
-            lookup["matches"] = cand
-            result.append(lookup)
-
-    return result
-
-
 def cast_docker_compose(var):
     "Convert any types to strings"
 
@@ -136,11 +121,17 @@ def cast_docker_compose(var):
     return result
 
 
+def to_bool(string):
+    "Return a boolean"
+    if isinstance(string, bool):
+        return string
+    return string.lower() in ["true", "1", "t", "y", "yes"]
+
+
 def merge_env_vars(obj):
     "Transform all keys of a dict starting by _ to their equivalent wihtout _"
 
-    override_keys = [key.lstrip("_")
-                     for key in obj.keys() if key.startswith("_")]
+    override_keys = [key.lstrip("_") for key in obj.keys() if key.startswith("_")]
     for key in override_keys:
         old_key = "_" + key
         obj[key] = obj[old_key]
@@ -156,6 +147,21 @@ def get_paasify_pkg_dir():
     import paasify as _
 
     return os.path.dirname(_.__file__)
+
+
+def ensure_dir_exists(path):
+    """Ensure directories exist for a given path"""
+    if not os.path.isdir(path):
+        log.info(f"Create directory: {path}")
+        os.makedirs(path)
+        return True
+    return False
+
+
+def ensure_parent_dir_exists(path):
+    """Ensure parent directories exist for a given path"""
+    parent = os.path.dirname(os.path.normpath(path))
+    return ensure_dir_exists(parent)
 
 
 # =====================================================================
@@ -187,8 +193,7 @@ class StringTemplate(Template):
             ):
                 # If all the groups are None, there must be
                 # another group we're not expecting
-                raise ValueError(
-                    "Unrecognized named group in pattern", self.pattern)
+                raise ValueError("Unrecognized named group in pattern", self.pattern)
         return ids
 
     def is_valid(self):
@@ -206,120 +211,10 @@ class StringTemplate(Template):
             ):
                 # If all the groups are None, there must be
                 # another group we're not expecting
-                raise ValueError(
-                    "Unrecognized named group in pattern", self.pattern)
+                raise ValueError("Unrecognized named group in pattern", self.pattern)
         return True
 
 
 # We override this method only if version of python is below 3.11
 if hasattr(Template, "get_identifiers"):
     StringTemplate = Template  # noqa: F811
-
-
-# =====================================================================
-# Beta libs (DEPRECATED)
-# =====================================================================
-
-
-def parse_vars(match):
-    "Deprecated"
-
-    match = match.groupdict()
-
-    name = match.get("name1", None) or match.get("name2", None)
-
-    # Detect assignment method
-    mode = match["mode"]
-    if mode == "-":
-        mode = "unset_alt"
-    elif mode == ":-":
-        mode = "empty_alt"
-    elif mode == "?":
-        mode = "unset_err"
-    elif mode == ":?":
-        mode = "empty_err"
-    else:
-        mode = "simple"
-
-    result = {"name": name, "mode": mode, "arg": match["arg"] or None}
-    return result
-
-
-# Broken
-# SHELL_REGEX =r'[^$]((\$(?P<name1>[0-9A-Z_]+))|(\${(?P<name2>[0-9A-Z_]+)((?P<mode>:?[?-]?)(?P<arg>(?R)))}))'
-
-
-# Test complex only v1
-# SHELL_REGEX =r'[^$](\${(?P<name2>[0-9A-Z_]+)((?P<mode>:?[?-]?)(?P<arg>.*))?})'
-
-
-# Test complex only v2
-# SHELL_REGEX =r'[^$](\${(?P<name2>[0-9A-Z_]+)((?P<mode>:?[?-]?)(?P<arg>.*(?R)?.*))?})'
-
-
-# WIPPP
-
-# OKK simple: v1 SHELL_REGEX =r'[^$]((\${(?P<name1>[0-9A-Z_]+)((?P<mode>:?[?-]?)(?P<arg>[^}]*))})|(\$(?P<name2>[0-9A-Z_]+)))'
-SHELL_REGEX = r"[^$]((\${(?P<name1>[0-9A-Z_]+)((?P<mode>:?[?-]?)(?P<arg>.*))})|(\$(?P<name2>[0-9A-Z_]+)))"
-
-
-# V2 testing
-SHELL_REGEX = r"[^$]((\${(?P<name1>[0-9A-Z_]+)((?P<mode>:?[?-]?)(?P<arg>.*))})|(\$(?P<name2>[0-9A-Z_]+)))"
-
-
-SHELL_REGEX = re.compile(SHELL_REGEX)  # , flags=regex.DEBUG)
-
-
-def extract_shell_vars(file):
-    "Extract all shell variables call in a file"
-
-    print(f"FILE MATCH: {file}")
-
-    # Open file
-    with open(file, encoding="uft-8") as _file:
-        lines = _file.readlines()
-
-    content = "".join(lines)
-
-    # LEXER APPROACH
-
-    # lexer = shlex.shlex(content)
-    print(shlex.split(content))
-    # for token in lexer:
-    #     print ( repr(token))
-
-    # REGEX APPROACH
-
-    # Parse shell vars, first round
-    results = []
-    for match in re.finditer(SHELL_REGEX, content):
-
-        result = parse_vars(match)
-        print("  NEW MATCH 1: ", result)
-        results.append(result)
-
-    # PArse shell vars second round
-    found = True
-    while found is True:
-
-        cand = [x["arg"] for x in results if isinstance(x["arg"], str)]
-        cand = "\n".join(cand)
-
-        # print (cand)
-        found = False
-        for match in re.finditer(SHELL_REGEX, cand):
-
-            result = parse_vars(match)
-            # print ("  NEW MATCH", match.groupdict())
-            print("  NEW MATCH 2: ", result)
-            var_name = result["name"]
-            if len([x for x in results if x["name"] == var_name]) == 0:
-                found = True
-                results.append(result)
-
-        # TEMP
-        # found = False
-
-    print("FINAL RESULT ============================")
-    pprint(results)
-    return results

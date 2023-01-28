@@ -6,9 +6,12 @@ vars:
 includes:
 
   dev:
-    taskfile: ./scripts/Taskfile.yml
+    taskfile: ./scripts/Taskfile.dev.yml
     dir: .
-    optional: true
+
+  release:
+    taskfile: ./scripts/Taskfile.release.yml
+    dir: .
 
   doc:
     taskfile: ./docs/Taskfile.yml
@@ -87,6 +90,29 @@ tasks:
       - test ! -d dist/
     cmds:
       - rm -rf dist/ && mkdir -p dist
+
+
+  # Test Workflow
+  # ---------------
+  fix_qa:
+    desc: Run short test suites
+    deps:
+      - dev:lint_black
+      - dev:lint_precommit
+
+  run_qa:
+    desc: Run short test suites
+    deps:
+      - dev:report_lint
+      - dev:check_black
+
+  run_tests:
+    desc: Run full test suites
+    deps:
+      - dev:test
+    cmds:
+      - task: dev:report_cov
+      - task: dev:report_lint
 
 
   # Release workflow
@@ -191,40 +217,3 @@ tasks:
       - build
     cmds:
       - INPUT_BODY="{{.BODY_HEADER}}" INPUT_TOKEN={{.INPUT_TOKEN}} bash scripts/publish_github.sh
-
-
-
-
-#
-#  # Project Workflow
-#  # ---------------
-#  run_qa:
-#    desc: Run short test suites
-#    deps:
-#    - run_black
-#    - report_linting
-#
-#  run_test:
-#    desc: Run full test suites
-#    deps:
-#    - run_black
-#    - run_test
-#    - report_coverage
-#    - report_linting
-#
-#
-#
-#  # Top level Workflow
-#  # ---------------
-#
-#  # serve_doc:
-#  #   desc: Serve locally documentation site
-#  #   deps:
-#  #     - doc:serve_doc
-#
-#  clean:
-#    desc: Clean all artifacts
-#    deps:
-#      - pkg_clean
-#      - docker_clean
-#

@@ -58,7 +58,7 @@ def bin2utf8(obj):
 class EngineCompose(NodeMap, PaasifyObj):
     "Generic docker-engine compose API"
 
-    _node_parent_kind = ["PaasifyStack"]
+    _node_parent_kind = ["Stack"]
 
     version = None
     docker_file_exists = False
@@ -126,19 +126,15 @@ class EngineCompose(NodeMap, PaasifyObj):
             f"{self.docker_file_path}",
         ]
 
-    def node_hook_final(self):
-        "Enable cli logging"
-        self.set_logger("paasify.cli.engine")
-
     def run(self, cli_args=None, command=None, logger=None, **kwargs):
         "Wrapper to execute commands"
 
         command = command or self.compose_bin
         cli_args = cli_args or []
 
-        # print ("RUN WRAPPER:", command, cli_args, self.log, kwargs)
-        result = _exec(command, cli_args=cli_args, logger=self.log, **kwargs)
-        # bin2utf8(result)
+        self.log.exec(f"Run: {command} {' '.join(cli_args)}")
+        # result = _exec(command, cli_args=cli_args, logger=self.log, **kwargs)
+        result = _exec(command, cli_args=cli_args, **kwargs)
 
         if result:
             result = bin2utf8(result)
@@ -182,7 +178,17 @@ class EngineCompose(NodeMap, PaasifyObj):
 
         env_string = env or {}
         env_string = {
-            k: cast_docker_compose(v) for k, v in env.items() if v is not None
+            k: cast_docker_compose(v)
+            for k, v in env.items()
+            if isinstance(
+                v,
+                (
+                    str,
+                    int,
+                    bool,
+                    #  type(None) # Do we want None as well ?
+                ),
+            )
         }
 
         out = self.run(cli_args=cli_args, _out=None, _env=env_string)

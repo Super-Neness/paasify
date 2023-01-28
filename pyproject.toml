@@ -45,14 +45,16 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.scripts]
 paasify = "paasify.cli:app"
 
-
 # Dependencies
 # ==================
 
 [tool.poetry.dependencies]
 python = "^3.8"
 
+# Breaks pypi
 #cafram = {git = "https://github.com/barbu-it/cafram", rev = "main"}
+#cafram = {git = "https://github.com/barbu-it/cafram.git", rev = "main"}
+cafram = {path = "cafram", develop = true}
 
 sh = "^1.14.3"
 anyconfig = "^0.13.0"
@@ -75,7 +77,6 @@ semver = "^2.13.0"
 #  jsonnet = "^0.18.0"
 #  giturlparse = "^0.10.0"
 #
-cafram = {git = "https://github.com/barbu-it/cafram.git", rev = "main"}
 
 [tool.poetry.group.dev.dependencies]
 python-semantic-release = "^7.32.2"
@@ -143,6 +144,11 @@ jupyter = "^1.0.0"
 # ==================
 
 # Doc: https://github.com/monim67/poetry-bumpversion
+
+[tool.poetry.group.documentation.dependencies]
+mkdocs-simple-hooks = "^0.1.5"
+mkdocs-exclude-search = "^0.6.4"
+
 [tool.poetry_bumpversion.file."paasify/version.py"]
 
 

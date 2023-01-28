@@ -19,5 +19,4 @@ version: ''
 
 ## Tag documentation
 
-<iframe scrolling="yes" src="/plugins_apidoc/traefik-svc/web.html" style="width: 100vw; height: 70vh; overflow: auto; border: 0px;">
-</iframe>
+--8<-- "src/plugins_apidoc/traefik-svc/web2.html"

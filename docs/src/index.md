@@ -1,22 +1,10 @@
-# Overview
 
-Paasify try to make docker compose files deployment easier and more reproducible. The whole point is to deploy
-docker containers. A general overview of docker looks like:
 
-* docker: container engine
-* docker container: containerized process
-* docker-compose: create docker containers with yaml files
+--8<-- "../README.md::37"
 
-Paasify introduces some new top level concepts:
+--8<-- "../README.md:62:150"
 
-* paasify project: a custom association of stacks
-* paasify stacks: an application deployable with docker-compose
-* paasify collection: collection of stacks in a git repo
-* paasify: program to manage paasify project
 
-So paasify is built over the concept of project, where is defined a sequential list of stacks. Each stacks corresponds to
-a docker-compose file to be deployed. The whole is contained inside the notion of project,  which is declared in
-a `paasify.yml` config file, at the root of your project directory.
 
 Below a ten thousand foot overview, this will deploy a wordpress with its database and a front proxy.
 
@@ -66,6 +54,6 @@ Please start with one of:
 
 * [Introduction](introduction)
 * [Tutorial](howto/learn_101)
-* [Concepts](concepts.md)
-* [Reference](schema_doc/index.md)
+* [Concepts](docs/concepts)
+* [Reference](refs/)
 * [Examples directory](examples)

@@ -5,21 +5,23 @@ Stack components class
 """
 
 import os
-from pprint import pprint  # noqa: F401
-
-import re
+from pprint import pprint, pformat  # noqa: F401
 
 import json
 import _jsonnet
 import anyconfig
 
 from cafram.nodes import NodeList, NodeMap
-from cafram.utils import flatten, first
+from cafram.utils import (
+    to_json,
+    to_yaml,
+    write_file,
+    first,
+    _exec,
+)
 
-from paasify.common import lookup_candidates, StringTemplate
-from paasify.framework import PaasifyObj, PaasifyConfigVar
+from paasify.framework import PaasifyObj
 import paasify.errors as error
-from paasify.engines import bin2utf8
 
 
 # =======================================================================================
@@ -27,138 +29,81 @@ from paasify.engines import bin2utf8
 # =======================================================================================
 
 
-class VarsManager(PaasifyObj):
-    """
-    This class manage a list of variables (PaasifyConfigVar), but it keep
-    the adding order.
+class StackDumper(PaasifyObj):
+    "StackDumper for dumping data into files for troubleshooting purpose"
 
-    Args:
-        PaasifyObj (_type_): _description_
+    def __init__(self, path, enabled=True):
 
-    Raises:
-        error.ProjectInvalidConfig: _description_
+        self.out_dir = path
+        self.enabled = enabled
 
-    Returns:
-        _type_: _description_
-    """
+        if self.enabled:
+            self.cleanup()
 
-    _vars = []
-    conf_logger = "paasify.cli.vars"
+    def cleanup(self):
+        "Cleanup target directory"
+        path = self.out_dir
 
-    def __init__(self, *arsg, **kwargs):
+        if not os.path.exists(path):
+            self.log.info(f"StackDumper created directory: {path}")
+            os.makedirs(path)
+        for file_ in os.listdir(path):
+            rm_file = os.path.join(path, file_)
+            self.log.notice(f"StackDumper removed file: {rm_file}")
+            os.remove(rm_file)
 
-        self._vars = []
-        super().__init__(*arsg, **kwargs)
+    def dump(self, file_name, content, fmt=None):
+        "Dump any data"
 
-    # Vars management
-    # ===========================
+        if not self.enabled:
+            return
 
-    def add_as_key(self, key, value):
-        "Add a list of vars into object"
-        obj = PaasifyConfigVar(
-            parent=None, ident="PaasifyStackVar", payload={key: value}
-        )
-        self._vars.append(obj)
+        dest = os.path.join(self.out_dir, file_name)
 
-    def add_as_list(self, vars_):
-        "Add a list of vars into object"
-        assert isinstance(vars_, list)
-        self._vars.extend(vars_)
+        if fmt == "json":
+            content = to_json(content)
+        elif fmt in ["yml", "yaml"]:
+            content = to_yaml(content)
+        elif fmt in ["pprint", "pformat"]:
+            content = pformat(content) + "\n"
 
-    def add_as_dict(self, vars_):
-        "Add a list of vars into object"
-        assert isinstance(vars_, dict)
+        if not isinstance(content, str):
+            content = str(content)
 
-        for var_name, var_value in vars_.items():
-            self.add_as_key(var_name, var_value)
+        self.log.info(f"Dumping data into: {dest}")
+        write_file(dest, content)
 
-    def resolve_dyn_vars(self, tpl, env, hint=None):
-        "Resolver environment and secret vars"
+    def show_diff(self):
+        "Show a colored diff outpout between files"
 
-        env = dict(env)
-        var_list = tpl.get_identifiers()
-        line = tpl.template
+        if not self.enabled:
+            return
 
-        for var in var_list:
-            if var.startswith("_env_"):
-                name = var[5:]
-                value = os.environ.get(name)
-                msg = f"Fetching environment value for: {hint}: {line} ({name}={value})"
-                self.log.info(msg)
-                env[var] = value
-            elif var.startswith("_secret_"):
-                msg = f"Support for secrets is not implemented yet: {hint}: {line}"
-                self.log.warning(msg)
-                env[var] = var
-                # raise NotImplementedError(msg)
+        print("==== Dump differential jsonnet output")
+        path = os.path.realpath(self.out_dir)
+        prev = os.path.join(path, "1-docker-compose.yml")
+        print(_exec("tail", cli_args=["-n", "9999", prev]))
+        for file_ in sorted(os.listdir(path)):
+            if file_.startswith("2-") and file_.endswith("out.yml"):
+                file_ = os.path.join(path, file_)
+                opts = [
+                    "--color=always",
+                    "-u",
+                    prev,
+                    file_,
+                ]
+                out = _exec("diff", cli_args=opts, _ok_code=[0, 1])
+                print(out)
+                prev = file_
 
-        return env
 
-    def template_value(self, value, env, hint=None):
-        "Render a string with template engine"
-
-        if not isinstance(value, str):
-            return value
-
-        # Resolve dynamic vars
-        tpl = StringTemplate(value)
-        env = self.resolve_dyn_vars(tpl, env, hint=hint)
-
-        # pylint: disable=broad-except
-        try:
-            old_value = value
-            value = tpl.substitute(**env)
-            if old_value != value:
-                self.log.debug(
-                    f"Transformed template value: {old_value} => {value}")
-
-        except KeyError as err:
-            self.log.warning(
-                f"Variable {err} is not defined in: {hint}='{value}'")
-
-        except ValueError:
-            self.log.debug(
-                f"Could not parse variable: {hint}='{value}', forwarding to docker compose"
-            )
-
-        return value
-
-    def render_as_dict(self, parse=False):
-        "Return a dict of the variable, last defined var win"
-
-        # Transform var list to dict
-        result = {var.name: var.value for var in self._vars}
-        if not parse:
-            return result
-
-        # Parse each values
-        for key, value in result.items():
-            result[key] = self.template_value(value, result, hint=key)
-
-        return result
-
-    # Vars processors
-    # ===========================
-
-    def process_yml_vars(self, lookup):
-        """Process yml vars from a tag_list"""
-
-        self.log.info("Process yaml vars")
-
-        vars_cand = lookup_candidates(lookup)
-        vars_cand = flatten([x["matches"] for x in vars_cand])
-
-        for cand in vars_cand:
-            self.log.debug(f"Loading vars file: {cand}")
-            conf = anyconfig.load(cand, ac_parser="yaml")
-            assert isinstance(conf, dict)
-            self.add_as_dict(conf)
+# =======================================================================================
+# Stack Assembler
+# =======================================================================================
 
 
 class StackAssembler(PaasifyObj):
     "Object to manage stack assemblage"
-
-    conf_logger = "paasify.cli.assembler"
 
     # Internal object:
     # all_tags
@@ -169,17 +114,20 @@ class StackAssembler(PaasifyObj):
     def _get_docker_files(self, all_tags):
         "Retrieve the list of tags docker-files"
 
-        self.log.info("Docker files:")
+        # TODO: Deprecated this, this has already been done before somewhere in the process !
+
         docker_files = []
         for cand in all_tags:
             docker_file = cand.get("docker_file")
             if docker_file:
                 docker_files.append(docker_file)
-                self.log.info(f"  Insert: {docker_file}")
+                self.log.info(f"Insert docker-compose: {docker_file}")
 
         return docker_files
 
-    def assemble_docker_compose(self, all_tags, engine, env=None):
+    def assemble_docker_compose(
+        self, all_tags, engine, env=None, dump_payload_log=False
+    ):
         "Generate the docker-compose file"
 
         docker_files = self._get_docker_files(all_tags)
@@ -188,43 +136,40 @@ class StackAssembler(PaasifyObj):
         env = env or {}
         assert isinstance(env, dict), f"Got: {env}"
 
-        self.log.debug("Docker vars:")
-        for key, val in sorted(env.items()):
-            self.log.debug(f"  {key}: {val}")
+        if dump_payload_log:
+            self.log.trace("Docker vars:")
+            for key, val in sorted(env.items()):
+                self.log.trace(f"  {key}: {val}")
 
-        try:
-            out = engine.assemble(docker_files, env=env)
-        except Exception as err:
-            err = bin2utf8(err)
-            # pylint: disable=no-member
-            self.log.critical(err.txterr)
-            raise error.DockerBuildConfig(
-                f"Impossible to build docker-compose files: {err}"
-            ) from err
+        out = engine.assemble(docker_files, env=env)
+        # Exception is too wide !
+        # try:
+        #    out = engine.assemble(docker_files, env=env)
+        # except Exception as err:
+        # # TOTEST => except sh.ErrorReturnCode as err:
+        #    err = bin2utf8(err)
+        #    # pylint: disable=no-member
+        #    self.log.critical(err.txterr)
+        #    raise error.DockerBuildConfig(
+        #        f"Impossible to build docker-compose files: {err}"
+        #    ) from err
 
         # Fetch output
         docker_run_content = out.stdout.decode("utf-8")
-        docker_run_payload = anyconfig.loads(
-            docker_run_content, ac_parser="yaml")
+        docker_run_payload = anyconfig.loads(docker_run_content, ac_parser="yaml")
         return docker_run_payload
 
     # Vars processors
     # ===========================
 
-    def jsonnet_low_api_call(self, jsonnet_file, action, args):
-        "New low level API call for jsonnet plugins"
-
-        _payload = self.process_jsonnet_exec(
-            jsonnet_file, action, {"args": args})
-
-        return _payload
-
-    def process_jsonnet_exec(self, file, action, data):
+    def process_jsonnet_exec(self, file, action, data, import_dirs=None):
         "Process jsonnet file"
 
         # Developper init
+        import_dirs = import_dirs or []
         data = data or {}
         assert isinstance(data, dict), f"Data must be dict, got: {data}"
+        # assert len(import_dirs) > 2, f"Missing import dirs, got: {import_dirs}"
 
         # TODO: Enforce jsonnet API
         # assert action in [
@@ -245,6 +190,46 @@ class StackAssembler(PaasifyObj):
         for key, val in data.items():
             ext_vars[key] = json.dumps(val)
 
+        def try_path(dir_, rel):
+            "Helper function to load a jsonnet file into memory for _jsonnet"
+
+            if not rel:
+                return None, None
+                # raise RuntimeError("Got invalid filename (empty string).")
+
+            if rel[0] == "/":
+                full_path = rel
+            else:
+                full_path = os.path.join(dir_, rel)
+
+            if full_path[-1] == "/":
+                return None, None
+                # raise RuntimeError("Attempted to import a directory")
+
+            if not os.path.isfile(full_path):
+                return full_path, None
+            with open(
+                full_path,
+                encoding="utf-8",
+            ) as file_:
+                return full_path, file_.read()
+
+        # Jsonnet import callback
+        def import_callback(dir_, rel):
+            "Helper function to load a jsonnet libraries in lookup paths"
+
+            test_dirs = [dir_] + import_dirs
+            for test_dir in test_dirs:
+                full_path, content = try_path(test_dir, rel)
+                self.log.trace(f"Load '{rel}' jsonnet from: {full_path}")
+                if content:
+                    return full_path, content.encode()
+
+            test_dirs = " ".join(test_dirs)
+            raise RuntimeError(
+                f"Jsonnet file not found '{rel}' in any of these paths: {test_dirs}"
+            )
+
         # Process jsonnet tag
         self.log.trace(f"Process jsonnet: {file} (action={action})")
         try:
@@ -252,13 +237,15 @@ class StackAssembler(PaasifyObj):
             result = _jsonnet.evaluate_file(
                 file,
                 ext_vars=ext_vars,
+                import_callback=import_callback,
             )
         except RuntimeError as err:
             self.log.critical(f"Can't parse jsonnet file: {file}")
             raise error.JsonnetBuildFailed(err)
 
         # Return python object from json output
-        return json.loads(result)
+        result = json.loads(result)
+        return result
 
 
 # =======================================================================================
@@ -266,7 +253,7 @@ class StackAssembler(PaasifyObj):
 # =======================================================================================
 
 
-class PaasifyStackApp(NodeMap, PaasifyObj):
+class StackApp(NodeMap, PaasifyObj):
     "Stack Applicationk Object"
 
     # conf_logger = "paasify.cli.stack_app"
@@ -283,9 +270,10 @@ class PaasifyStackApp(NodeMap, PaasifyObj):
         "App name attribute"
         return self.app_name
 
-    def node_hook_init(self, **kwargs):
+    # def node_hook_init(self, **kwargs):
+    def node_hook_init(self):
 
-        # Future:
+        # Future: let's propagate from the top instead ...
         # parents = self.get_parents()
         # stack = parents[1]
         # prj = parents[3]
@@ -296,6 +284,7 @@ class PaasifyStackApp(NodeMap, PaasifyObj):
         self.app_dir = None
 
     def node_hook_transform(self, payload):
+
         if isinstance(payload, str):
             payload = {"app": payload}
 
@@ -318,7 +307,6 @@ class PaasifyStackApp(NodeMap, PaasifyObj):
 
         if not app_name:
             app_name = os.path.split(app_path)[-1]
-            app_name = re.sub(r"[0-9]*$", "", app_name)
 
         result = {
             "app": app_def,
@@ -329,48 +317,19 @@ class PaasifyStackApp(NodeMap, PaasifyObj):
 
         return result
 
-    def ensure_app_exists(self):
-        "Validate stack is installed"
+    def get_app_source(self):
+        "Return app source"
 
-        app_dir = self.sources.find_app(
-            self.app_path, source_name=self.app_source)
+        app_source = self.app_source or None
+        src = self.prj.sources.get_app_source(self.name, source=app_source)
+        return src
 
-        if not app_dir:
-            self.log.warning("Be sure you run before: paasify src-install")
-            msg = f"Impossible to find app: {self.app_name} for stack {self.stack.name}"
-            raise error.MissingApp(msg)
+    def get_app_path(self):
+        "Return app path"
 
-        self.app_dir = app_dir
-        self.tags_dir = os.path.join(app_dir, ".paasify", "plugins")
-
-        # TODO: Compat, remove this shit
-        self.collection_dir = app_dir
-
-    def lookup_docker_files_app(self):
-        """Lookup docker-compose files in app directory"""
-
-        self.ensure_app_exists()
-        lookup = [
-            {
-                "path": self.app_dir,
-                "pattern": ["docker-compose.yml", "docker-compose.yml"],
-            }
-        ]
-        return lookup_candidates(lookup)
-
-    def lookup_jsonnet_files_app(self):
-        """Lookup docker-compose files in app directory"""
-
-        lookup = [
-            {
-                "path": self.app_dir,
-                "pattern": ["docker-compose.yml", "docker-compose.yml"],
-            }
-        ]
-        local_cand = lookup_candidates(lookup)
-        local_cand = flatten([x["matches"] for x in local_cand])
-
-        return local_cand
+        src = self.get_app_source()
+        ret = os.path.join(src.path, self.name)
+        return ret
 
 
 # =======================================================================================
@@ -420,10 +379,10 @@ stack_ref_kind_defs = [
     },
 ]
 stack_ref_defs = {
-    "[!^~].*": {
+    "[~].*": {
         "title": "Disabled Tag: ~$tag_name",
         "description": (
-            "Disable a tag from processing. Any vars are ignored. Other chars are also supported: !^"
+            "Completely disable a tag from the processing list, whatever how many instances there are."
         ),
         "oneOf": stack_ref_kind_defs,
         "default": {},
@@ -455,7 +414,7 @@ stack_ref_defs = {
 }
 
 
-class PaasifyStackTag(NodeMap, PaasifyObj):
+class StackTag(NodeMap, PaasifyObj):
     """Paasify Stack object"""
 
     conf_schema = {
@@ -536,13 +495,8 @@ class PaasifyStackTag(NodeMap, PaasifyObj):
         },
         {
             "key": "vars",
-            # "cls": dict,
         },
     ]
-    #     {
-    #     "name": str,
-    #     "vars": dict,
-    # }
 
     # Place to store list of candidates
     jsonnet_candidates = None
@@ -572,7 +526,7 @@ class PaasifyStackTag(NodeMap, PaasifyObj):
 
             keys = list(payload.keys())
             if len(keys) == 1:
-
+                # TODO: replace this by a common function !
                 for key, val in payload.items():
                     result["name"] = key
                     result["vars"] = val
@@ -584,49 +538,17 @@ class PaasifyStackTag(NodeMap, PaasifyObj):
         else:
             raise Exception(f"Not supported type: {payload}")
 
+        assert result["name"]
         return result
 
-    def _lookup_file(self, dirs, pattern):
-        "Lookup a specific file name in dirs"
 
-        lookup = []
-        for dir_ in dirs:
-            self.log.trace(
-                f"Looking up file '{','.join(pattern)}' in dir: {dir_}")
-            lookup_def = {
-                "path": dir_,
-                "pattern": pattern,
-            }
-            lookup.append(lookup_def)
-
-        local_cand = lookup_candidates(lookup)
-        local_cand = flatten([x["matches"] for x in local_cand])
-
-        return local_cand
-
-    def lookup_docker_files_tag(self, dirs):
-        """Lookup docker-compose files in app directory"""
-        pattern = [f"docker-compose.{self.name}.yml",
-                   f"docker-compose.{self.name}.yml"]
-        return self._lookup_file(dirs, pattern)
-
-    def lookup_jsonnet_files_tag(self, dirs):
-        """Lookup docker-compose files in app directory"""
-        pattern = [f"{self.name}.jsonnet"]
-        return self._lookup_file(dirs, pattern)
-
-
-class PaasifyStackTagManager(NodeList, PaasifyObj):
-    "Manage Stacks"
+class StackTagMgr(NodeList, PaasifyObj):
+    "Manage Stack Tags"
 
     conf_schema = {
         # "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "Paasify Stack Tags configuration",
-        "description": ("Determine a list of tags to apply."),
-        "type": "array",
-        # "default": [],
-        # "additionalProperties": PaasifyStackTag.conf_schema,
-        # "items": PaasifyStackTag.conf_schema,
+        "description": "Determine a list of tags to apply",
         "oneOf": [
             {
                 "title": "List of tags",
@@ -636,8 +558,8 @@ class PaasifyStackTagManager(NodeList, PaasifyObj):
                 ),
                 "type": "array",
                 "default": [],
-                "additionalProperties": PaasifyStackTag.conf_schema,
-                # "items": PaasifyStackTag.conf_schema,
+                "additionalProperties": StackTag.conf_schema,
+                # "items": StackTag.conf_schema,
                 "examples": [
                     {
                         "tags": [
@@ -673,42 +595,44 @@ class PaasifyStackTagManager(NodeList, PaasifyObj):
         ],
     }
 
-    conf_children = PaasifyStackTag
+    conf_children = StackTag
+    module = "paasify.cli"
 
-    def list_tags(self):
-        "List all tags (deprecated)"
-        return self._nodes
+    def node_hook_transform(self, payload):
 
-    def resolve_tags_files(self, dirs):
-        """Generate a list of file tags
+        # Fetch tag lists
+        tag_stack_list = payload["raw"]
+        tag_prefix = payload["tag_prefix"]
+        tag_suffix = payload["tag_suffix"]
 
-        Return a list of dict:
-        """
+        # Process keys (before parsing :/ )
+        tag_stack_keys = [tag for tag in tag_stack_list if isinstance(tag, str)]
+        tag_stack_keys = tag_stack_keys + [
+            first(tag.keys()) for tag in tag_stack_list if isinstance(tag, dict)
+        ]
 
-        # Actually find best candidates
-        results = []
-        for tag in self.get_children():
+        # Remove duplicates tags
+        tag_items = []
+        for item in tag_prefix:
+            if item not in tag_stack_keys:
+                tag_items.append(item)
+        tag_items.extend(tag_stack_list)
+        for item in tag_suffix:
+            if item not in tag_stack_keys:
+                tag_items.append(item)
 
-            # Match files
-            docker_files = tag.lookup_docker_files_tag(dirs)
-            jsonnet_files = tag.lookup_jsonnet_files_tag(dirs)
+        return tag_items
 
-            # Backup data in object
-            tag.jsonnet_candidates = jsonnet_files
-            tag.docker_candidates = docker_files
+    def node_hook_final(self):
+        "Remove disabled tags"
 
-            # Sanity check
-            if len(jsonnet_files) + len(docker_files) == 0:
-                dirs = ", ".join(dirs)
-                msg = f"Could not find tag '{tag.name}' for stack '{tag.stack.stack_name}' in following directories: {dirs}"
-                raise error.MissingTag(msg)
-
-            results.append(
-                {
-                    "tag": tag,
-                    "jsonnet_file": first(jsonnet_files),
-                    "docker_file": first(docker_files),
-                }
-            )
-
-        return results
+        markers = "^"
+        excluded_tags = [
+            tag.name for tag in self._nodes if tag.name.startswith(markers)
+        ]
+        if excluded_tags:
+            self.log.debug(f"Disabling tags: {excluded_tags}")
+        for excluded in excluded_tags:
+            clean = excluded[1:]
+            xclude = [excluded, clean]
+            self._nodes = [tag for tag in self._nodes if tag.name not in xclude]
