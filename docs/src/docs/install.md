@@ -1,14 +1,16 @@
 # Installation
 
-There are several way of installing paasify, but the recommended way is the pip way. If you want to develop or
-patch paasify, you will want to [install paasify with git](install) instead.
+There are different ways to install paasify. The most recommended way is with pip. 
+
+If you want to develop or
+patch paasify, you have to [install paasify with git](install) instead.
 
 
 
 
 ## Install with Pip
 
-To install pip in your home:
+To install pip at home:
 
 ```
 pip install --user paasify
@@ -16,21 +18,21 @@ pip install --user paasify
 
 ## Install with Docker
 
-!!! warning "About using this install method"
+!!! warning "About using this method"
 
-    Using docker install method is the quickest to test paasify, however this
-    method is limited and will not work if you reference files outside of your
-    project directory. This install method is more to for quick try or production
+    Using docker installation is the fastest way to use and test Paasify. However, this
+    method is limited and will not work if you have reference from outside of your
+    project directory. This way is the best way for quick try or production
     deployment.
 
 
-Basically, you can run the docker image this way:
+You can also run the docker image by this way:
 
 ```
 docker run --rm -v $PWD:/work -ti ghcr.io/barbu-it/paasify:latest --help
 ```
 
-You can make a more convenient shell wrapper:
+For a more convenient shell wrapper:
 ```
 $ sudo cat <<EOF > /usr/local/bin/paasify
 #!/bin/bash
